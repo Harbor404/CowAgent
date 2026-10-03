@@ -62,6 +62,24 @@ def _strip_provider_model_name(value) -> str:
     return name
 
 
+def _same_base(a: str, b: str) -> bool:
+    return (a or "").strip().rstrip("/") == (b or "").strip().rstrip("/")
+
+
+def _discovered_capabilities(name: str) -> List[str]:
+    """Best-effort capability tag from a model name; the user can edit it."""
+    lowered = name.lower()
+    if "embed" in lowered:
+        return ["embedding"]
+    if "tts" in lowered:
+        return ["tts"]
+    if "whisper" in lowered or "transcribe" in lowered:
+        return ["asr"]
+    if "dall-e" in lowered or "image" in lowered:
+        return ["image"]
+    return ["text"]
+
+
 def _discover_models(provider_id: str, api_key: str, api_base: str) -> List[str]:
     """Fetch and normalize a provider's model list.
 
@@ -129,6 +147,8 @@ def _discover_models(provider_id: str, api_key: str, api_base: str) -> List[str]
         else:
             continue
         name = _strip_provider_model_name(name)
+        if any(word in name.lower() for word in ("moderation", "rerank")):
+            continue
         if name and name not in seen:
             seen.add(name)
             models.append(name)
@@ -1671,9 +1691,15 @@ class ModelsHandler:
             stored_key = local_config.get("custom_api_key", "")
             stored_base = local_config.get("custom_api_base", "")
 
-        # A masked value is the UI's "unchanged" sentinel, not a credential.
-        api_key = requested_key if requested_key and "*" not in requested_key else stored_key
         api_base = requested_base or stored_base
+        # A masked value is the UI's "unchanged" sentinel, not a credential. The
+        # stored key is only ever sent to the stored base.
+        if requested_key and "*" not in requested_key:
+            api_key = requested_key
+        elif _same_base(api_base, stored_base) and is_real_key(stored_key):
+            api_key = stored_key
+        else:
+            api_key = ""
         if not api_key and effective_id != "custom":
             return json.dumps({"status": "error", "message": "API key is required"})
         try:
@@ -1683,7 +1709,7 @@ class ModelsHandler:
         return json.dumps({
             "status": "success",
             "provider_id": provider_id,
-            "models": [{"name": name, "capabilities": ["text"]} for name in names],
+            "models": [{"name": name, "capabilities": _discovered_capabilities(name)} for name in names],
             "count": len(names),
         }, ensure_ascii=False)
 

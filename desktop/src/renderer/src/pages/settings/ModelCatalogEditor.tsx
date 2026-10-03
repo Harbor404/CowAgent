@@ -193,7 +193,9 @@ export const ModelCatalogEditor: React.FC<ModelCatalogEditorProps> = ({
         const name = String((raw && (raw as { name?: string }).name) || '').trim()
         if (!name || existing.has(name)) continue
         existing.add(name)
-        next.push({ name, capabilities: ['text'], context_window: '', max_output_tokens: '' })
+        const caps = (raw as { capabilities?: ModelCapability[] }).capabilities
+        const capabilities = Array.isArray(caps) && caps.length ? caps.slice() : (['text'] as ModelCapability[])
+        next.push({ name, capabilities, context_window: '', max_output_tokens: '' })
       }
       onRowsChange(next)
     } catch (err) {

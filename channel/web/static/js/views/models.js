@@ -2387,7 +2387,8 @@ function discoverCatalogModels(prefix, providerId) {
             const name = (model && (model.name || model.id)) || '';
             if (!name || have.has(name)) return;
             have.add(name);
-            draft.push({ name, capabilities: ['text'], context_window: '', max_output_tokens: '' });
+            const capabilities = Array.isArray(model.capabilities) && model.capabilities.length ? model.capabilities.slice() : ['text'];
+            draft.push({ name, capabilities, context_window: '', max_output_tokens: '' });
         });
         renderCatalogRows(prefix);
         if (status) {

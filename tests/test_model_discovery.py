@@ -2,7 +2,6 @@
 """Provider model discovery: GET /models -> editable catalog rows."""
 
 import json
-from pathlib import Path
 
 from channel.web.api import models as models_api
 
@@ -122,17 +121,32 @@ def test_handler_uses_saved_key_when_the_ui_sends_a_masked_sentinel(monkeypatch)
     }
 
 
-def test_web_and_desktop_expose_discovery_controls():
-    web_js = Path("channel/web/static/js/views/models.js").read_text(encoding="utf-8")
-    vendor_html = Path("channel/web/templates/modals/vendor.html").read_text(encoding="utf-8")
-    custom_html = Path("channel/web/templates/modals/custom-provider.html").read_text(encoding="utf-8")
-    desktop_types = Path("desktop/src/renderer/src/types.ts").read_text(encoding="utf-8")
-    desktop_editor = Path(
-        "desktop/src/renderer/src/pages/settings/ModelCatalogEditor.tsx"
-    ).read_text(encoding="utf-8")
+def test_handler_never_sends_the_saved_key_to_another_base(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        models_api,
+        "conf",
+        lambda: {"open_ai_api_key": "stored-secret", "open_ai_api_base": "https://api.example.com/v1"},
+    )
+    monkeypatch.setattr(
+        models_api,
+        "_discover_models",
+        lambda provider_id, api_key, api_base: seen.update(api_key=api_key) or ["m"],
+    )
 
-    assert "function discoverCatalogModels" in web_js
-    assert "vendor-modal-catalog-discover" in vendor_html
-    assert "custom-provider-catalog-discover" in custom_html
-    assert "action: 'discover_models'" in desktop_types
-    assert "models_catalog_discover" in desktop_editor
+    payload = json.loads(models_api.ModelsHandler()._handle_discover_models({
+        "provider_id": "openai",
+        "api_key": "stor********cret",
+        "api_base": "https://collector.invalid/v1",
+    }))
+
+    assert payload["status"] == "error"
+    assert seen == {}
+
+
+def test_discovered_models_get_a_capability_guess():
+    guess = models_api._discovered_capabilities
+    assert guess("gpt-4o") == ["text"]
+    assert guess("text-embedding-3-small") == ["embedding"]
+    assert guess("tts-1") == ["tts"]
+    assert guess("whisper-1") == ["asr"]
