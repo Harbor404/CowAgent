@@ -296,9 +296,8 @@ class AgentStreamExecutor:
         # sequence on the same file only surfaces one card in the UI.
         self._emitted_artifacts = set()
 
-        # Provider usage consumed by this run, accumulated across every model
-        # call (tool-loop steps included). The final assistant message carries
-        # this snapshot so a history reload can still show what the reply cost.
+        # Provider usage summed over every model call of this run; StepWriter
+        # stamps it on the stored answer.
         self.run_usage: Optional[Dict[str, int]] = None
 
     @staticmethod
@@ -345,21 +344,8 @@ class AgentStreamExecutor:
         }
 
     def _record_stream_usage(self, snapshot: Optional[Dict[str, Any]]) -> None:
-        if not snapshot:
-            return
-        self.run_usage = self._merge_usage(getattr(self, "run_usage", None), snapshot)
-
-    def _attach_run_usage_to_last_assistant(self) -> None:
-        """Attach this run's accumulated usage to its final assistant message."""
-        usage = getattr(self, "run_usage", None)
-        if not usage:
-            return
-        for message in reversed(self.messages):
-            if message.get("role") != "assistant":
-                continue
-            extras = message.setdefault("extras", {})
-            extras["usage"] = dict(usage)
-            return
+        if snapshot:
+            self.run_usage = self._merge_usage(self.run_usage, snapshot)
 
     def _check_cancelled(self) -> None:
         """Raise AgentCancelledError if the user requested cancellation.
@@ -1230,7 +1216,6 @@ class AgentStreamExecutor:
             if self.steer_inbox is not None:
                 self.steer_inbox.close()
             final_response = final_response.strip() if final_response else final_response
-            self._attach_run_usage_to_last_assistant()
             if cancelled:
                 # Emit before agent_end so channels can mark UI as cancelled
                 self._emit_event("agent_cancelled", {"final_response": final_response})
@@ -1880,9 +1865,6 @@ class AgentStreamExecutor:
         if stream_usage is not None:
             try:
                 usage_snapshot = self._normalize_stream_usage(stream_usage)
-                # Sum every model call this user turn made. A tool loop can call
-                # the provider several times; the visible reply's cost is all of
-                # them, not only whichever call happened to run last.
                 self._record_stream_usage(usage_snapshot)
                 # Fingerprint the history this usage describes. get_context_usage
                 # compares it against the live history estimate: if trimming /

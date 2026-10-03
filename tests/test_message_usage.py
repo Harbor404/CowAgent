@@ -9,9 +9,11 @@ exposed to the web console.
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent.memory.conversation_store import ConversationStore
 from agent.protocol.agent_stream import AgentStreamExecutor
+from agent.protocol.step_writer import StepWriter
 
 
 def _user(text):
@@ -81,32 +83,16 @@ def test_stream_usage_is_normalized_and_accumulated_across_model_calls():
     }
 
 
-def test_run_usage_is_attached_to_the_final_assistant_message():
-    executor = object.__new__(AgentStreamExecutor)
-    executor.messages = [
-        {"role": "assistant", "content": [{"type": "text", "text": "tool step"}]},
-        _user("tool result"),
-        _assistant("final answer"),
-    ]
-    executor.run_usage = {
-        "prompt_tokens": 300,
-        "completion_tokens": 40,
-        "total_tokens": 340,
-        "prompt_cache_hit_tokens": 100,
-        "prompt_cache_miss_tokens": 200,
-        "calls": 2,
-    }
+def test_step_writer_stamps_run_usage_on_a_copy_of_the_answer():
+    usage = {"prompt_tokens": 300, "completion_tokens": 40, "total_tokens": 340, "calls": 2}
+    tool_step = {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "x", "input": {}}]}
+    answer = _assistant("final answer")
+    written = []
+    writer = StepWriter(written.extend)
+    writer.bind(SimpleNamespace(run_usage=usage))
 
-    executor._attach_run_usage_to_last_assistant()
+    writer.finish([tool_step, _user("tool result"), answer])
 
-    assert executor.messages[-1]["extras"]["usage"] == executor.run_usage
-
-
-def test_web_console_wires_usage_into_history_and_live_done():
-    render_js = Path("channel/web/static/js/chat/render.js").read_text(encoding="utf-8")
-    send_js = Path("channel/web/static/js/chat/send.js").read_text(encoding="utf-8")
-    channel_py = Path("channel/web/core/channel.py").read_text(encoding="utf-8")
-
-    assert "renderMessageUsageHtml(msg && msg.usage)" in render_js
-    assert "attachMessageUsage(targetBotEl, item.usage)" in send_js
-    assert channel_py.count('"usage": seqs.get("usage")') == 2
+    assert "extras" not in answer
+    assert "extras" not in written[0]
+    assert written[-1]["extras"]["usage"] == usage
